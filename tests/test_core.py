@@ -143,9 +143,9 @@ class TestCalibrationPlan(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "plan.csv"
             path.write_text(
-                "transmittance_percent,samples_per_point\n"
-                "100,3\n"
-                "88.5,7\n",
+                "transmittance_percent,samples_per_point,verification_samples_per_point\n"
+                "100,3,6\n"
+                "88.5,7,8\n",
                 encoding="utf-8",
             )
 
@@ -154,8 +154,38 @@ class TestCalibrationPlan(unittest.TestCase):
         self.assertEqual(len(points), 2)
         self.assertEqual(points[0].transmittance_percent, 100.0)
         self.assertEqual(points[0].samples_per_point, 3)
+        self.assertEqual(points[0].verification_samples_per_point, 6)
         self.assertEqual(points[1].transmittance_percent, 88.5)
         self.assertEqual(points[1].samples_per_point, 7)
+        self.assertEqual(points[1].verification_samples_per_point, 8)
+
+    def test_plan_verification_samples_falls_back_to_cli_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "plan.csv"
+            path.write_text(
+                "transmittance_percent,samples_per_point\n"
+                "100,3\n"
+                "88.5,7\n",
+                encoding="utf-8",
+            )
+
+            points = load_calibration_points(path, default_verification_samples_per_point=9)
+
+        self.assertEqual(points[0].verification_samples_per_point, 9)
+        self.assertEqual(points[1].verification_samples_per_point, 9)
+
+    def test_rejects_invalid_verification_sample_count(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "plan.csv"
+            path.write_text(
+                "transmittance_percent,samples_per_point,verification_samples_per_point\n"
+                "100,5,0\n"
+                "90,5,5\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(CalibrationError):
+                load_calibration_points(path)
 
     def test_rejects_one_point_plan(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -227,7 +257,7 @@ class TestWorkflowParameterValidation(unittest.TestCase):
         workflow = CalibrationWorkflow(
             sensor=FakeSensor(),  # type: ignore[arg-type]
             config=CalibrationConfig(
-                calibration_points=(CalibrationPoint(100.0),),
+                calibration_points=(CalibrationPoint(100.0, verification_samples_per_point=5),),
                 verification_samples_per_point=5,
             ),
             interactive=False,
@@ -239,6 +269,32 @@ class TestWorkflowParameterValidation(unittest.TestCase):
         self.assertEqual(len(points), 1)
         self.assertAlmostEqual(points[0].measured, 100.0)
         self.assertEqual(len([reading for reading in points[0].readings if not reading.used]), 1)
+
+    def test_verify_uses_point_level_sample_count_from_plan(self) -> None:
+        class FakeSensor:
+            def __init__(self) -> None:
+                self.values = iter([90.0, 90.1, 89.9])
+                self.read_count = 0
+
+            def read_dust_ratio(self) -> float:
+                self.read_count += 1
+                return next(self.values)
+
+        sensor = FakeSensor()
+        workflow = CalibrationWorkflow(
+            sensor=sensor,  # type: ignore[arg-type]
+            config=CalibrationConfig(
+                calibration_points=(CalibrationPoint(90.0, verification_samples_per_point=3),),
+                verification_samples_per_point=5,
+            ),
+            interactive=False,
+        )
+
+        with patch("calibration_app.workflow.time.sleep"):
+            points = workflow._verify()
+
+        self.assertEqual(sensor.read_count, 3)
+        self.assertEqual(len(points[0].readings), 3)
 
 
 if __name__ == "__main__":

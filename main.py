@@ -58,7 +58,10 @@ def main() -> int:
     logger = logging.getLogger(__name__)
 
     try:
-        calibration_points = load_calibration_points(args.plan_file)
+        calibration_points = load_calibration_points(
+            args.plan_file,
+            default_verification_samples_per_point=args.verification_samples,
+        )
         logger.info(
             "Loaded %d calibration point(s) from %s",
             len(calibration_points),

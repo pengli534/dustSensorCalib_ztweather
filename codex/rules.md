@@ -1,46 +1,37 @@
 # AI 编程规范与约束
 
-## 1. 通信规范
+## 1. CSV 规则
 
-- 所有 Modbus 通信必须保留 CRC 校验、超时处理和最多 3 次重试。
-- 3 次重试后仍失败时必须记录 `ERROR` 并中断校准流程。
-- V2.1 常规测量数据必须按 32-bit float、大端、IEEE754 解析。
-- 标定原始样本必须来自 V2.1 原始测量命令中的 `CH1` 和 `CH2`。
-- 当前 `0x0009` 起始地址写入 `A1/A2` 是 Excel/旧版兼容策略，必须保留 warning，不得误标为 V2.1 标准写法。
+- `calibration_plan.csv` 必须支持列 `transmittance_percent,samples_per_point,verification_samples_per_point`。
+- `verification_samples_per_point` 是终检阶段每个透光率点位的读取次数。
+- 未配置 `verification_samples_per_point` 时，必须回退到命令行 `--verification-samples`。
+- 所有采样次数字段必须校验为正整数。
+- 修改 CSV 解析时必须保持旧列名 `sample_count` 兼容。
 
 ## 2. 采样规范
 
-- 点位和每点标定采样次数优先来自 `calibration_plan.csv`。
+- 标定采样次数使用 `CalibrationPoint.samples_per_point`。
+- 终检采样次数使用 `CalibrationPoint.verification_samples_per_point`。
 - 人工换膜确认后必须先等待 1s。
-- 每次标定采样前必须等待 8s，给设备内部采样刷新留出余量。
+- 每次标定采样和终检读取前必须等待对应配置的等待时间。
 - 不得把同一透光率下的多次标定采样先求平均后再拟合。
 
-## 3. 标定异常剔除规范
+## 3. 异常剔除规范
 
-- 多次标定采样中偏差过大的结果必须剔除，不参与拟合。
 - 标定剔除判断以同一透光率点位内的 `CH1/CH2` 比值为准。
+- 终检剔除判断以同一透光率点位内的多次 `0x10` 读数为准。
 - 默认使用 median/MAD modified Z-score，阈值为 `3.5`。
-- 每个标定样本无论是否剔除，都必须写入 `calibration_samples.csv`。
-- CSV 必须包含 `used_for_fit` 和 `outlier_reason`，便于复核。
-- 拟合、参数编码和拟合线绘制只能使用未剔除样本。
+- 标定样本 CSV 必须包含 `used_for_fit` 和 `outlier_reason`。
+- 终检 CSV 必须包含每次读数、是否参与平均、剔除原因、平均值和判定结果。
 
-## 4. 终检规范
-
-- 终检不得只读一次；每个透光率点位默认读取 5 次。
-- 终检每次读取前必须等待 8s。
-- 终检读数也必须做异常剔除，剔除后对剩余读数求平均。
-- 终检 Pass/Fail 使用平均值与标准透光率的绝对误差判断，阈值默认 `5%`。
-- `verification_results.csv` 必须记录每次读数、是否参与平均、剔除原因、平均值和判定结果。
-- 执行终检后，`calibration_fit.svg` 必须标识终检平均结果。
-
-## 5. 输出归档规范
+## 4. 输出归档规范
 
 - 所有测量输出必须按时间分文件夹保存。
 - 默认目录为 `output/YYYYMMDD_HHMMSS/`。
 - 不得覆盖已有运行结果；同秒冲突时追加数字后缀。
-- 样本 CSV、拟合图、参数 CSV、终检 CSV 必须保存在本次时间戳目录下。
+- 执行终检后，`calibration_fit.svg` 必须标识终检平均结果。
 
-## 6. 测试规范
+## 5. 测试规范
 
-- 数学函数、协议解析、标定异常剔除、终检异常剔除、输出目录生成必须有单元测试。
-- 修改拟合、剔除或终检逻辑后必须运行 `python -m unittest discover -s tests`。
+- CSV 新列解析、默认值回退、非法采样次数、终检按点位次数读取都必须有单元测试。
+- 修改拟合、剔除、CSV 或终检逻辑后必须运行 `python -m unittest discover -s tests`。

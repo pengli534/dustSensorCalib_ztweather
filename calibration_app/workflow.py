@@ -279,21 +279,23 @@ class CalibrationWorkflow:
         return FitResult(k=k, b=b, a1=a1, a2=a2)
 
     def _verify(self) -> list[VerificationPoint]:
-        if self.config.verification_samples_per_point <= 0:
-            raise CalibrationError("Verification sample count must be greater than zero")
-
         points: list[VerificationPoint] = []
         for point_config in self.config.calibration_points:
             transmittance = point_config.transmittance_percent
             self._wait_user(f"终检：请放置 {transmittance:g}% 透光膜，确认后按回车...")
             time.sleep(self.config.film_settle_wait_s)
             readings: list[float] = []
-            for index in range(1, self.config.verification_samples_per_point + 1):
+            verification_sample_count = point_config.verification_samples_per_point
+            if verification_sample_count <= 0:
+                raise CalibrationError(
+                    f"Verification sample count must be greater than zero at {transmittance:g}%"
+                )
+            for index in range(1, verification_sample_count + 1):
                 logger.info(
                     "Waiting %.1fs before verification sample %d/%d at %.2f%%",
                     self.config.verification_wait_s,
                     index,
-                    self.config.verification_samples_per_point,
+                    verification_sample_count,
                     transmittance,
                 )
                 time.sleep(self.config.verification_wait_s)
@@ -303,7 +305,7 @@ class CalibrationWorkflow:
                     "Verification sample reference=%.2f index=%d/%d measured=%.4f",
                     transmittance,
                     index,
-                    self.config.verification_samples_per_point,
+                    verification_sample_count,
                     measured_sample,
                 )
 

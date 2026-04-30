@@ -1,7 +1,7 @@
-transmittance_percent,samples_per_point
-100,5
-99,5
-97,5
-91.4,5
-85,5
-72.4,5
+transmittance_percent,samples_per_point,verification_samples_per_point
+100,5,5
+99,5,5
+97,5,5
+91.4,5,5
+85,5,5
+72.4,5,5

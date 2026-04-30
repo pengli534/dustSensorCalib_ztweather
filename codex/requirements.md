@@ -8,7 +8,28 @@
 - V2.1 常规测量数据按 32-bit float、大端、IEEE754 解析。
 - 标定采样必须使用 V2.1 原始测量命令读取 `CH1/CH2`。
 
-## 2. 校准流程
+## 2. 校准计划 CSV
+
+`calibration_plan.csv` 格式：
+
+```csv
+transmittance_percent,samples_per_point,verification_samples_per_point
+100,5,5
+99,5,5
+97,5,5
+91.4,5,5
+85,5,5
+72.4,5,5
+```
+
+- `transmittance_percent`：必填，标准透光率。
+- `samples_per_point`：可选，标定阶段该点位的采样次数，默认 5。
+- `verification_samples_per_point`：可选，终检阶段该点位的读取次数，默认来自 `--verification-samples`。
+- 兼容旧列名：`sample_count` 等同于 `samples_per_point`。
+- 兼容终检列别名：`verification_samples`、`verification_sample_count` 等同于 `verification_samples_per_point`。
+- 采样次数必须为正整数。
+
+## 3. 校准流程
 
 1. 读取 `calibration_plan.csv`。
 2. 执行陀螺仪水平校准。
@@ -18,25 +39,15 @@
 6. 对每个透光率点位的多次标定采样做异常值剔除。
 7. 使用未剔除样本拟合 `y = kx + b`。
 8. 输出拟合图和参数文件，写入设备前允许人工确认或调整。
-9. 默认执行终检；终检也按多次读取、异常剔除、平均值判定执行。
-
-## 3. 标定异常样本剔除
-
-- 判断对象为每条标定样本的 `CH1/CH2` 比值。
-- 判断范围为同一透光率点位内部，不跨透光率点位比较。
-- 默认算法为 median/MAD modified Z-score，阈值为 `3.5`。
-- 当同组 MAD 为 0 时，仅保留与组内中位数一致的稳定样本。
-- 被剔除样本必须记录在 CSV 和日志中，不能参与拟合、拟合线绘制或 `A1/A2` 编码。
-- 命令行参数 `--outlier-z-threshold` 可调整标定采样异常剔除阈值。
+9. 默认执行终检；终检按 CSV 中每个点位的 `verification_samples_per_point` 多次读取、异常剔除、平均值判定。
 
 ## 4. 终检多次平均
 
-- 每个终检点默认读取 5 次 `0x10` 积灰污染比。
+- 每个终检点读取次数优先来自 `calibration_plan.csv` 的 `verification_samples_per_point`。
+- 如果 CSV 未填写终检采样次数，则使用命令行 `--verification-samples`，默认 5。
 - 每次终检读取前等待 `verification_wait_s`，默认 8s。
 - 终检读数按同一透光率点位内部做异常值剔除，默认阈值 `3.5`。
-- 终检结果使用未剔除读数的平均值参与 `±5%` 判定，解决前 1-2 个过渡值导致 100% 透光验证失败的问题。
-- 命令行参数 `--verification-samples` 可调整每点终检读取次数。
-- 命令行参数 `--verification-outlier-z-threshold` 可调整终检异常剔除阈值。
+- 终检结果使用未剔除读数的平均值参与 `±5%` 判定。
 
 ## 5. 输出文件
 
@@ -45,9 +56,3 @@
 - `calibration_fit.svg` 显示参与拟合样本、剔除样本、拟合直线；终检后追加终检平均结果标识。
 - `calibration_parameters.csv` 记录最终写入前确认后的 `k/b/A1/A2`。
 - `verification_results.csv` 记录每次终检读数、是否参与平均、剔除原因、平均值、误差和是否通过。
-
-## 6. 参数写入
-
-- 参数编码规则为 `A1 = round((-k) * 10000)`、`A2 = round(b * 100)`。
-- 当前设备写入仍采用 Excel/旧版方式：从 `0x0009` 起连续写入 `A1/A2` 两个寄存器。
-- 该写入方式与 V2.1 文档中 `0x0009~0x000F` 保留地址的描述不一致，必须在日志中显式提示。

@@ -4,13 +4,33 @@
 .\.venv\Scripts\python.exe main.py --port COM6 --address 1
 ```
 
-如需调整标定采样异常剔除灵敏度：
+## calibration_plan.csv 格式
+
+推荐格式：
+
+```csv
+transmittance_percent,samples_per_point,verification_samples_per_point
+100,5,5
+99,5,5
+97,5,5
+91.4,5,5
+85,5,5
+72.4,5,5
+```
+
+- `samples_per_point`：标定阶段每个透光率点位的采样次数。
+- `verification_samples_per_point`：终检阶段每个透光率点位的读取次数。
+- 如果 CSV 没有 `verification_samples_per_point`，程序会使用命令行 `--verification-samples`，默认 5。
+
+## 可选参数
+
+调整标定采样异常剔除灵敏度：
 
 ```powershell
 .\.venv\Scripts\python.exe main.py --port COM6 --address 1 --outlier-z-threshold 3.5
 ```
 
-如需调整终检读取次数或终检异常剔除灵敏度：
+调整 CSV 未配置时的终检默认读取次数，或调整终检异常剔除灵敏度：
 
 ```powershell
 .\.venv\Scripts\python.exe main.py --port COM6 --address 1 --verification-samples 5 --verification-outlier-z-threshold 3.5
@@ -33,14 +53,7 @@ output/20260430_142501/
 
 ## 终检说明
 
-终检默认每个透光率点位读取 5 次。程序会先剔除偏差过大的读数，再用剩余读数平均值进行 `±5%` 判定。这样可以减少换膜后前 1-2 个过渡读数对 100% 透光验证的影响。
-
-## 运行条件
-
-- Windows 64 位。
-- 串口驱动已安装，例如 CH340/USB 转串口驱动。
-- 确认设备实际串口号，若不是 COM6，请改成实际端口，例如 `--port COM3`。
-- 命令需在工程根目录执行，因为默认读取当前目录下的 `calibration_plan.csv`。
+终检读取次数优先来自 `calibration_plan.csv` 的 `verification_samples_per_point`。程序会先剔除偏差过大的读数，再用剩余读数平均值进行 `±5%` 判定。
 
 ## 安装虚拟环境
 

@@ -7,12 +7,14 @@ from pathlib import Path
 from calibration_app.exceptions import CalibrationError
 
 DEFAULT_SAMPLE_COUNT = 5
+DEFAULT_VERIFICATION_SAMPLE_COUNT = 5
 
 
 @dataclass(frozen=True)
 class CalibrationPoint:
     transmittance_percent: float
     samples_per_point: int = DEFAULT_SAMPLE_COUNT
+    verification_samples_per_point: int = DEFAULT_VERIFICATION_SAMPLE_COUNT
 
 
 DEFAULT_CALIBRATION_POINTS: tuple[CalibrationPoint, ...] = (
@@ -25,10 +27,25 @@ DEFAULT_CALIBRATION_POINTS: tuple[CalibrationPoint, ...] = (
 )
 
 
-def load_calibration_points(path: str | Path) -> tuple[CalibrationPoint, ...]:
+def load_calibration_points(
+    path: str | Path,
+    default_verification_samples_per_point: int = DEFAULT_VERIFICATION_SAMPLE_COUNT,
+) -> tuple[CalibrationPoint, ...]:
+    if default_verification_samples_per_point <= 0:
+        raise CalibrationError(
+            "Default verification sample count must be greater than zero"
+        )
+
     csv_path = Path(path)
     if not csv_path.exists():
-        return DEFAULT_CALIBRATION_POINTS
+        return tuple(
+            CalibrationPoint(
+                transmittance_percent=point.transmittance_percent,
+                samples_per_point=point.samples_per_point,
+                verification_samples_per_point=default_verification_samples_per_point,
+            )
+            for point in DEFAULT_CALIBRATION_POINTS
+        )
 
     points: list[CalibrationPoint] = []
     with csv_path.open("r", newline="", encoding="utf-8-sig") as f:
@@ -52,9 +69,16 @@ def load_calibration_points(path: str | Path) -> tuple[CalibrationPoint, ...]:
                 or row.get("sample_count")
                 or str(DEFAULT_SAMPLE_COUNT)
             ).strip()
+            raw_verification_sample_count = (
+                row.get("verification_samples_per_point")
+                or row.get("verification_samples")
+                or row.get("verification_sample_count")
+                or str(default_verification_samples_per_point)
+            ).strip()
             try:
                 transmittance = float(raw_transmittance)
                 sample_count = int(raw_sample_count)
+                verification_sample_count = int(raw_verification_sample_count)
             except ValueError as exc:
                 raise CalibrationError(
                     f"Invalid calibration plan CSV row {row_number}: {row}"
@@ -64,10 +88,16 @@ def load_calibration_points(path: str | Path) -> tuple[CalibrationPoint, ...]:
                 raise CalibrationError(
                     f"Invalid sample count at CSV row {row_number}: {sample_count}"
                 )
+            if verification_sample_count <= 0:
+                raise CalibrationError(
+                    "Invalid verification sample count at CSV row "
+                    f"{row_number}: {verification_sample_count}"
+                )
             points.append(
                 CalibrationPoint(
                     transmittance_percent=transmittance,
                     samples_per_point=sample_count,
+                    verification_samples_per_point=verification_sample_count,
                 )
             )
 
