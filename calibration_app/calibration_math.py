@@ -30,6 +30,13 @@ class SampleOutlierEvaluation:
 
 
 @dataclass(frozen=True)
+class NumericOutlierEvaluation:
+    value: float
+    used: bool
+    outlier_reason: str = ""
+
+
+@dataclass(frozen=True)
 class FitResult:
     k: float
     b: float
@@ -94,6 +101,40 @@ def filter_sample_outliers(
             evaluations_by_id[id(sample)] = SampleOutlierEvaluation(sample, used_for_fit, reason)
 
     return [evaluations_by_id[id(sample)] for sample in samples]
+
+
+def filter_numeric_outliers(
+    values: list[float],
+    z_threshold: float = 3.5,
+    min_samples: int = 3,
+) -> list[NumericOutlierEvaluation]:
+    if z_threshold <= 0:
+        raise ValueError("Outlier z-threshold must be greater than zero")
+    if min_samples < 1:
+        raise ValueError("Minimum samples must be at least one")
+    if len(values) < min_samples:
+        return [NumericOutlierEvaluation(value, True) for value in values]
+
+    median_value = median(values)
+    deviations = [abs(value - median_value) for value in values]
+    mad = median(deviations)
+
+    evaluations: list[NumericOutlierEvaluation] = []
+    for value, deviation in zip(values, deviations):
+        if mad == 0:
+            used = deviation == 0
+            reason = "" if used else (
+                f"value differs from stable median {median_value:.8f}"
+            )
+        else:
+            modified_z = 0.6745 * deviation / mad
+            used = modified_z <= z_threshold
+            reason = "" if used else (
+                f"modified_z={modified_z:.2f} exceeds threshold {z_threshold:.2f}; "
+                f"median={median_value:.8f}"
+            )
+        evaluations.append(NumericOutlierEvaluation(value, used, reason))
+    return evaluations
 
 
 def fit_line(samples: list[CalibrationSample]) -> LinearFit:

@@ -11,6 +11,7 @@ def write_fit_svg(
     fit: LinearFit,
     path: str | Path,
     rejected_samples: list[CalibrationSample] | None = None,
+    verification_points: list[tuple[float, float]] | None = None,
 ) -> None:
     if not samples:
         raise ValueError("At least one sample is required to plot calibration fit")
@@ -19,9 +20,16 @@ def write_fit_svg(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     rejected_samples = rejected_samples or []
+    verification_points = verification_points or []
     plot_samples = samples + rejected_samples
     xs = [sample.ratio for sample in plot_samples]
+    verification_xys = [
+        (_expected_ratio_for(reference, fit), measured)
+        for reference, measured in verification_points
+    ]
+    xs.extend(x for x, _ in verification_xys)
     ys = [sample.transmittance_percent for sample in plot_samples]
+    ys.extend(measured for _, measured in verification_points)
     x_min, x_max = _expanded_range(min(xs), max(xs))
     y_min, y_max = _expanded_range(min(ys), max(ys))
 
@@ -81,6 +89,28 @@ def write_fit_svg(
             )
         )
 
+    verification_marks = []
+    for (reference, measured), (x_value, y_value) in zip(verification_points, verification_xys):
+        title = (
+            f"verification reference={reference:g}%, "
+            f"average={measured:.4f}%, abs_error={abs(measured - reference):.4f}%"
+        )
+        x = sx(x_value)
+        y = sy(y_value)
+        verification_marks.append(
+            '<polygon points="{x:.2f},{y1:.2f} {x2:.2f},{y:.2f} {x:.2f},{y2:.2f} {x1:.2f},{y:.2f}" '
+            'fill="#f59e0b" stroke="#92400e" stroke-width="1.4" opacity="0.92">'
+            "<title>{title}</title></polygon>".format(
+                x=x,
+                y=y,
+                x1=x - 6,
+                x2=x + 6,
+                y1=y - 6,
+                y2=y + 6,
+                title=html.escape(title),
+            )
+        )
+
     grid_lines = []
     x_labels = []
     y_labels = []
@@ -118,6 +148,7 @@ def write_fit_svg(
   <line x1="{sx(line_x1):.2f}" y1="{sy(line_y1):.2f}" x2="{sx(line_x2):.2f}" y2="{sy(line_y2):.2f}" stroke="#dc2626" stroke-width="2.6" />
   <g>{''.join(circles)}</g>
   <g>{''.join(rejected_marks)}</g>
+  <g>{''.join(verification_marks)}</g>
   <g font-family="Arial, sans-serif" font-size="13" fill="#111827">
     <text x="{margin_left + plot_width / 2:.2f}" y="{height - 22}" text-anchor="middle">CH1 / CH2 ratio</text>
     <text x="24" y="{margin_top + plot_height / 2:.2f}" text-anchor="middle" transform="rotate(-90 24 {margin_top + plot_height / 2:.2f})">Transmittance (%)</text>
@@ -128,12 +159,20 @@ def write_fit_svg(
     <line x1="{width - 220}" y1="{height - 31}" x2="{width - 210}" y2="{height - 21}" stroke="#b91c1c" stroke-width="2" />
     <line x1="{width - 220}" y1="{height - 21}" x2="{width - 210}" y2="{height - 31}" stroke="#b91c1c" stroke-width="2" />
     <text x="{width - 202}" y="{height - 22}" fill="#374151">Rejected</text>
-    <line x1="{width - 112}" y1="{height - 26}" x2="{width - 82}" y2="{height - 26}" stroke="#dc2626" stroke-width="2.6" />
-    <text x="{width - 74}" y="{height - 22}" fill="#374151">Fit</text>
+    <polygon points="{width - 118},{height - 32} {width - 112},{height - 26} {width - 118},{height - 20} {width - 124},{height - 26}" fill="#f59e0b" stroke="#92400e" stroke-width="1.4" opacity="0.92" />
+    <text x="{width - 104}" y="{height - 22}" fill="#374151">Verify avg</text>
+    <line x1="{width - 68}" y1="{height - 26}" x2="{width - 38}" y2="{height - 26}" stroke="#dc2626" stroke-width="2.6" />
+    <text x="{width - 30}" y="{height - 22}" fill="#374151">Fit</text>
   </g>
 </svg>
 '''
     output_path.write_text(svg, encoding="utf-8")
+
+
+def _expected_ratio_for(transmittance_percent: float, fit: LinearFit) -> float:
+    if fit.k == 0:
+        return 0.0
+    return (transmittance_percent - fit.b) / fit.k
 
 
 def _expanded_range(min_value: float, max_value: float) -> tuple[float, float]:

@@ -28,6 +28,18 @@ def parse_args() -> argparse.Namespace:
         help="Modified Z-score threshold for excluding abnormal CH1/CH2 samples",
     )
     parser.add_argument(
+        "--verification-samples",
+        type=int,
+        default=5,
+        help="Number of readings to average at each final verification point",
+    )
+    parser.add_argument(
+        "--verification-outlier-z-threshold",
+        type=float,
+        default=3.5,
+        help="Modified Z-score threshold for excluding abnormal verification readings",
+    )
+    parser.add_argument(
         "--plan-file",
         default="calibration_plan.csv",
         help="CSV file with transmittance_percent and samples_per_point columns",
@@ -62,6 +74,8 @@ def main() -> int:
             calibration_points=calibration_points,
             skip_final_verification=args.skip_verification,
             sample_outlier_z_threshold=args.outlier_z_threshold,
+            verification_samples_per_point=args.verification_samples,
+            verification_outlier_z_threshold=args.verification_outlier_z_threshold,
         )
         with ModbusRTUClient(serial_config, retries=calibration_config.retry_count) as client:
             sensor = SensorDevice(client, calibration_config)

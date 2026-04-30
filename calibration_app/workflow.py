@@ -11,8 +11,10 @@ from calibration_app.calibration_math import (
     CalibrationSample,
     FitResult,
     LinearFit,
+    NumericOutlierEvaluation,
     SampleOutlierEvaluation,
     encode_fit_result,
+    filter_numeric_outliers,
     filter_sample_outliers,
     fit_line,
 )
@@ -28,6 +30,7 @@ logger = logging.getLogger(__name__)
 class VerificationPoint:
     reference: float
     measured: float
+    readings: tuple[NumericOutlierEvaluation, ...]
 
     @property
     def abs_error(self) -> float:
@@ -103,6 +106,12 @@ class CalibrationWorkflow:
         logger.info("Step 6: final verification")
         verification_points = self._verify()
         self._write_verification_csv(verification_points)
+        self._write_fit_plot(
+            fitting_samples,
+            linear_fit,
+            rejected_samples,
+            verification_points=verification_points,
+        )
 
         failures = [
             point
@@ -270,23 +279,73 @@ class CalibrationWorkflow:
         return FitResult(k=k, b=b, a1=a1, a2=a2)
 
     def _verify(self) -> list[VerificationPoint]:
+        if self.config.verification_samples_per_point <= 0:
+            raise CalibrationError("Verification sample count must be greater than zero")
+
         points: list[VerificationPoint] = []
         for point_config in self.config.calibration_points:
             transmittance = point_config.transmittance_percent
             self._wait_user(f"终检：请放置 {transmittance:g}% 透光膜，确认后按回车...")
             time.sleep(self.config.film_settle_wait_s)
-            time.sleep(self.config.verification_wait_s)
-            measured = self.sensor.read_dust_ratio()
-            point = VerificationPoint(reference=transmittance, measured=measured)
+            readings: list[float] = []
+            for index in range(1, self.config.verification_samples_per_point + 1):
+                logger.info(
+                    "Waiting %.1fs before verification sample %d/%d at %.2f%%",
+                    self.config.verification_wait_s,
+                    index,
+                    self.config.verification_samples_per_point,
+                    transmittance,
+                )
+                time.sleep(self.config.verification_wait_s)
+                measured_sample = self.sensor.read_dust_ratio()
+                readings.append(measured_sample)
+                logger.info(
+                    "Verification sample reference=%.2f index=%d/%d measured=%.4f",
+                    transmittance,
+                    index,
+                    self.config.verification_samples_per_point,
+                    measured_sample,
+                )
+
+            evaluations = filter_numeric_outliers(
+                readings,
+                z_threshold=self.config.verification_outlier_z_threshold,
+                min_samples=self.config.min_verification_samples_for_outlier_rejection,
+            )
+            used_readings = [
+                evaluation.value
+                for evaluation in evaluations
+                if evaluation.used
+            ]
+            if not used_readings:
+                raise VerificationError(
+                    f"All verification readings were rejected at {transmittance:g}%"
+                )
+            measured = sum(used_readings) / len(used_readings)
+            point = VerificationPoint(
+                reference=transmittance,
+                measured=measured,
+                readings=tuple(evaluations),
+            )
             points.append(point)
             logger.info(
-                "Verification reference=%.2f measured=%.2f abs_error=%.2f tolerance=%.2f result=%s",
+                "Verification reference=%.2f average=%.2f abs_error=%.2f tolerance=%.2f used_count=%d rejected_count=%d result=%s",
                 point.reference,
                 point.measured,
                 point.abs_error,
                 self.config.final_tolerance_percent,
+                len(used_readings),
+                len(evaluations) - len(used_readings),
                 "PASS" if point.passed(self.config.final_tolerance_percent) else "FAIL",
             )
+            for evaluation in evaluations:
+                if not evaluation.used:
+                    logger.warning(
+                        "Rejected verification reading reference=%.2f measured=%.4f reason=%s",
+                        transmittance,
+                        evaluation.value,
+                        evaluation.outlier_reason,
+                    )
         return points
 
     def _write_samples_csv(self, evaluations: list[SampleOutlierEvaluation]) -> None:
@@ -317,16 +376,30 @@ class CalibrationWorkflow:
         path = self.output_dir / "verification_results.csv"
         with path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["reference_percent", "measured_percent", "abs_error", "passed"])
+            writer.writerow([
+                "reference_percent",
+                "sample_index",
+                "measured_percent",
+                "used_for_average",
+                "outlier_reason",
+                "average_percent",
+                "abs_error",
+                "passed",
+            ])
             for point in points:
-                writer.writerow(
-                    [
-                        point.reference,
-                        point.measured,
-                        point.abs_error,
-                        point.passed(self.config.final_tolerance_percent),
-                    ]
-                )
+                for index, reading in enumerate(point.readings, start=1):
+                    writer.writerow(
+                        [
+                            point.reference,
+                            index,
+                            reading.value,
+                            reading.used,
+                            reading.outlier_reason,
+                            point.measured,
+                            point.abs_error,
+                            point.passed(self.config.final_tolerance_percent),
+                        ]
+                    )
         logger.info("Wrote verification data to %s", path)
 
     def _write_fit_result_csv(self, fit: FitResult) -> None:
@@ -342,9 +415,19 @@ class CalibrationWorkflow:
         samples: list[CalibrationSample],
         fit: LinearFit,
         rejected_samples: list[CalibrationSample],
+        verification_points: list[VerificationPoint] | None = None,
     ) -> None:
         path = self.output_dir / "calibration_fit.svg"
-        write_fit_svg(samples, fit, path, rejected_samples=rejected_samples)
+        write_fit_svg(
+            samples,
+            fit,
+            path,
+            rejected_samples=rejected_samples,
+            verification_points=[
+                (point.reference, point.measured)
+                for point in (verification_points or [])
+            ],
+        )
         logger.info("Wrote calibration fit plot to %s", path)
 
     def _create_run_output_dir(self) -> Path:

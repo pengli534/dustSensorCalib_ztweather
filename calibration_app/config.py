@@ -99,6 +99,9 @@ class CalibrationConfig:
     final_tolerance_percent: float = 5.0
     sample_outlier_z_threshold: float = 3.5
     min_samples_for_outlier_rejection: int = 3
+    verification_samples_per_point: int = 5
+    verification_outlier_z_threshold: float = 3.5
+    min_verification_samples_for_outlier_rejection: int = 3
 
     gyro_calibration_register: int = 0x0005
     sample_period_register: int = 0x0006

@@ -3,15 +3,17 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from calibration_app.calibration_math import (
     CalibrationSample,
     encode_fit_result,
+    filter_numeric_outliers,
     filter_sample_outliers,
     fit_calibration,
     fit_line,
 )
-from calibration_app.config import DEFAULT_CALIBRATION_POINTS, load_calibration_points
+from calibration_app.config import CalibrationConfig, CalibrationPoint, DEFAULT_CALIBRATION_POINTS, load_calibration_points
 from calibration_app.exceptions import CalibrationError
 from calibration_app.modbus_rtu import append_crc, crc16_modbus
 from calibration_app.plotting import write_fit_svg
@@ -122,6 +124,15 @@ class TestCalibrationMath(unittest.TestCase):
         self.assertEqual([sample.ratio for sample in rejected], [9.0, 8.0])
         self.assertEqual(len(used), 6)
 
+    def test_filter_numeric_outliers_rejects_verification_spikes(self) -> None:
+        evaluations = filter_numeric_outliers([82.0, 100.0, 100.1, 99.9, 100.0])
+
+        used = [evaluation.value for evaluation in evaluations if evaluation.used]
+        rejected = [evaluation.value for evaluation in evaluations if not evaluation.used]
+
+        self.assertEqual(rejected, [82.0])
+        self.assertAlmostEqual(sum(used) / len(used), 100.0)
+
 
 class TestCalibrationPlan(unittest.TestCase):
     def test_missing_plan_uses_default_points(self) -> None:
@@ -170,12 +181,13 @@ class TestFitPlot(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "calibration_fit.svg"
-            write_fit_svg(samples, fit, path)
+            write_fit_svg(samples, fit, path, verification_points=[(100.0, 99.6)])
             content = path.read_text(encoding="utf-8")
 
         self.assertIn("<svg", content)
         self.assertIn("Calibration Fit", content)
         self.assertIn("Used", content)
+        self.assertIn("Verify avg", content)
         self.assertIn("Fit", content)
 
 
@@ -203,6 +215,30 @@ class TestWorkflowParameterValidation(unittest.TestCase):
             self.assertEqual(run_dir.parent, Path(temp_dir))
             self.assertTrue(run_dir.exists())
             self.assertRegex(run_dir.name, r"^\d{8}_\d{6}$")
+
+    def test_verify_averages_after_rejecting_outliers(self) -> None:
+        class FakeSensor:
+            def __init__(self) -> None:
+                self.values = iter([82.0, 100.0, 100.1, 99.9, 100.0])
+
+            def read_dust_ratio(self) -> float:
+                return next(self.values)
+
+        workflow = CalibrationWorkflow(
+            sensor=FakeSensor(),  # type: ignore[arg-type]
+            config=CalibrationConfig(
+                calibration_points=(CalibrationPoint(100.0),),
+                verification_samples_per_point=5,
+            ),
+            interactive=False,
+        )
+
+        with patch("calibration_app.workflow.time.sleep"):
+            points = workflow._verify()
+
+        self.assertEqual(len(points), 1)
+        self.assertAlmostEqual(points[0].measured, 100.0)
+        self.assertEqual(len([reading for reading in points[0].readings if not reading.used]), 1)
 
 
 if __name__ == "__main__":

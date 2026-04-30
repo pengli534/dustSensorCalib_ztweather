@@ -4,10 +4,16 @@
 .\.venv\Scripts\python.exe main.py --port COM6 --address 1
 ```
 
-如需调整异常样本剔除灵敏度：
+如需调整标定采样异常剔除灵敏度：
 
 ```powershell
 .\.venv\Scripts\python.exe main.py --port COM6 --address 1 --outlier-z-threshold 3.5
+```
+
+如需调整终检读取次数或终检异常剔除灵敏度：
+
+```powershell
+.\.venv\Scripts\python.exe main.py --port COM6 --address 1 --verification-samples 5 --verification-outlier-z-threshold 3.5
 ```
 
 ## 输出位置
@@ -20,10 +26,14 @@ output/20260430_142501/
 
 该目录中会保存：
 
-- `calibration_samples.csv`：全部采样结果，包含 `used_for_fit` 和 `outlier_reason`。
-- `calibration_fit.svg`：拟合图，蓝点为参与拟合样本，红色叉号为剔除样本。
+- `calibration_samples.csv`：全部标定采样结果，包含 `used_for_fit` 和 `outlier_reason`。
+- `calibration_fit.svg`：拟合图，蓝点为参与拟合样本，红色叉号为剔除样本，橙色菱形为终检平均结果。
 - `calibration_parameters.csv`：最终确认后的 `k/b/A1/A2`。
-- `verification_results.csv`：终检结果，跳过终检时不会生成。
+- `verification_results.csv`：终检每次读数、是否参与平均、剔除原因、平均值和判定结果。
+
+## 终检说明
+
+终检默认每个透光率点位读取 5 次。程序会先剔除偏差过大的读数，再用剩余读数平均值进行 `±5%` 判定。这样可以减少换膜后前 1-2 个过渡读数对 100% 透光验证的影响。
 
 ## 运行条件
 
