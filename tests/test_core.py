@@ -16,7 +16,7 @@ from calibration_app.calibration_math import (
 from calibration_app.config import CalibrationConfig, CalibrationPoint, DEFAULT_CALIBRATION_POINTS, load_calibration_points
 from calibration_app.exceptions import CalibrationError
 from calibration_app.modbus_rtu import append_crc, crc16_modbus
-from calibration_app.plotting import write_fit_svg
+from calibration_app.plotting import write_fit_svg, write_verification_svg
 from calibration_app.sensor_device import parse_raw_measurement_response, registers_to_float32_be
 from calibration_app.workflow import CalibrationWorkflow
 
@@ -220,6 +220,23 @@ class TestFitPlot(unittest.TestCase):
         self.assertIn("Verify avg", content)
         self.assertIn("Fit", content)
 
+    def test_write_verification_svg_creates_result_plot(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "verification_results.svg"
+            write_verification_svg(
+                [(100.0, 99.6, True), (90.0, 83.0, False)],
+                path,
+                tolerance_percent=5.0,
+                title="Verification Results",
+            )
+            content = path.read_text(encoding="utf-8")
+
+        self.assertIn("<svg", content)
+        self.assertIn("Verification Results", content)
+        self.assertIn("Tolerance", content)
+        self.assertIn("PASS", content)
+        self.assertIn("FAIL", content)
+
 
 class TestWorkflowParameterValidation(unittest.TestCase):
     def test_build_fit_result_accepts_decimal_and_hex_range(self) -> None:
@@ -295,6 +312,40 @@ class TestWorkflowParameterValidation(unittest.TestCase):
 
         self.assertEqual(sensor.read_count, 3)
         self.assertEqual(len(points[0].readings), 3)
+
+    def test_run_reinspection_only_writes_separate_output(self) -> None:
+        class FakeSensor:
+            def __init__(self) -> None:
+                self.values = iter([100.0, 100.1, 99.9])
+                self.gyro_calibrated = False
+
+            def calibrate_gyro(self) -> None:
+                self.gyro_calibrated = True
+
+            def read_dust_ratio(self) -> float:
+                return next(self.values)
+
+        sensor = FakeSensor()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workflow = CalibrationWorkflow(
+                sensor=sensor,  # type: ignore[arg-type]
+                config=CalibrationConfig(
+                    calibration_points=(CalibrationPoint(100.0, verification_samples_per_point=3),),
+                    reinspection_only=True,
+                ),
+                interactive=False,
+                output_dir=temp_dir,
+            )
+
+            with patch("calibration_app.workflow.time.sleep"):
+                result = workflow.run()
+
+            self.assertIsNone(result)
+            self.assertFalse(sensor.gyro_calibrated)
+            self.assertTrue((workflow.output_dir / "reinspection_results.csv").exists())
+            self.assertTrue((workflow.output_dir / "reinspection_results.svg").exists())
+            self.assertFalse((workflow.output_dir / "verification_results.csv").exists())
+            self.assertFalse((workflow.output_dir / "calibration_samples.csv").exists())
 
 
 if __name__ == "__main__":

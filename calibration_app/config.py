@@ -120,6 +120,7 @@ class SerialConfig:
 class CalibrationConfig:
     device_address: int = 0x01
     calibration_points: tuple[CalibrationPoint, ...] = DEFAULT_CALIBRATION_POINTS
+    reinspection_only: bool = False
     skip_final_verification: bool = False
     retry_count: int = 3
     sensor_sample_period_s: int = 5

@@ -20,7 +20,7 @@ from calibration_app.calibration_math import (
 )
 from calibration_app.config import CalibrationConfig
 from calibration_app.exceptions import CalibrationError, VerificationError
-from calibration_app.plotting import write_fit_svg
+from calibration_app.plotting import write_fit_svg, write_verification_svg
 from calibration_app.sensor_device import SensorDevice
 
 logger = logging.getLogger(__name__)
@@ -53,9 +53,13 @@ class CalibrationWorkflow:
         self.interactive = interactive
         self.output_dir = Path(output_dir)
 
-    def run(self) -> FitResult:
+    def run(self) -> FitResult | None:
         self.output_dir = self._create_run_output_dir()
         logger.info("Run output directory: %s", self.output_dir)
+
+        if self.config.reinspection_only or self._confirm_reinspection_only():
+            self._run_reinspection()
+            return None
 
         logger.info("Step 1: gyro horizontal calibration")
         self._wait_user("请确认传感器已水平放置，然后按回车开始陀螺仪水平校准...")
@@ -104,8 +108,13 @@ class CalibrationWorkflow:
             return fit
 
         logger.info("Step 6: final verification")
-        verification_points = self._verify()
-        self._write_verification_csv(verification_points)
+        verification_points = self._verify(prompt_prefix="终检", log_prefix="Verification")
+        self._write_verification_csv(verification_points, "verification_results.csv")
+        self._write_verification_plot(
+            verification_points,
+            "verification_results.svg",
+            "Verification Results",
+        )
         self._write_fit_plot(
             fitting_samples,
             linear_fit,
@@ -129,8 +138,49 @@ class CalibrationWorkflow:
                 )
             raise VerificationError("Final verification failed")
 
-        logger.success("Final verification PASS")  # type: ignore[attr-defined]
+        self._log_success("Final verification PASS")
         return fit
+
+    def _confirm_reinspection_only(self) -> bool:
+        if not self.interactive:
+            return False
+        answer = input("是否跳过校准流程，仅执行复检？[y/N]: ").strip().lower()
+        return answer in {"y", "yes"}
+
+    def _run_reinspection(self) -> None:
+        logger.info("Reinspection only: calibration workflow skipped")
+        reinspection_points = self._verify(prompt_prefix="复检", log_prefix="Reinspection")
+        self._write_verification_csv(reinspection_points, "reinspection_results.csv")
+        self._write_verification_plot(
+            reinspection_points,
+            "reinspection_results.svg",
+            "Reinspection Results",
+        )
+
+        failures = [
+            point
+            for point in reinspection_points
+            if not point.passed(self.config.final_tolerance_percent)
+        ]
+        if failures:
+            for point in failures:
+                logger.error(
+                    "Reinspection failed reference=%.2f measured=%.2f abs_error=%.2f tolerance=%.2f",
+                    point.reference,
+                    point.measured,
+                    point.abs_error,
+                    self.config.final_tolerance_percent,
+                )
+            raise VerificationError("Reinspection failed")
+
+        self._log_success("Reinspection PASS")
+
+    def _log_success(self, message: str) -> None:
+        success = getattr(logger, "success", None)
+        if success is None:
+            logger.info(message)
+        else:
+            success(message)
 
     def _collect_samples(self) -> list[CalibrationSample]:
         samples: list[CalibrationSample] = []
@@ -278,11 +328,15 @@ class CalibrationWorkflow:
             )
         return FitResult(k=k, b=b, a1=a1, a2=a2)
 
-    def _verify(self) -> list[VerificationPoint]:
+    def _verify(
+        self,
+        prompt_prefix: str = "终检",
+        log_prefix: str = "Verification",
+    ) -> list[VerificationPoint]:
         points: list[VerificationPoint] = []
         for point_config in self.config.calibration_points:
             transmittance = point_config.transmittance_percent
-            self._wait_user(f"终检：请放置 {transmittance:g}% 透光膜，确认后按回车...")
+            self._wait_user(f"{prompt_prefix}：请放置 {transmittance:g}% 透光膜，确认后按回车...")
             time.sleep(self.config.film_settle_wait_s)
             readings: list[float] = []
             verification_sample_count = point_config.verification_samples_per_point
@@ -292,8 +346,9 @@ class CalibrationWorkflow:
                 )
             for index in range(1, verification_sample_count + 1):
                 logger.info(
-                    "Waiting %.1fs before verification sample %d/%d at %.2f%%",
+                    "Waiting %.1fs before %s sample %d/%d at %.2f%%",
                     self.config.verification_wait_s,
+                    log_prefix.lower(),
                     index,
                     verification_sample_count,
                     transmittance,
@@ -302,7 +357,8 @@ class CalibrationWorkflow:
                 measured_sample = self.sensor.read_dust_ratio()
                 readings.append(measured_sample)
                 logger.info(
-                    "Verification sample reference=%.2f index=%d/%d measured=%.4f",
+                    "%s sample reference=%.2f index=%d/%d measured=%.4f",
+                    log_prefix,
                     transmittance,
                     index,
                     verification_sample_count,
@@ -321,7 +377,7 @@ class CalibrationWorkflow:
             ]
             if not used_readings:
                 raise VerificationError(
-                    f"All verification readings were rejected at {transmittance:g}%"
+                    f"All {log_prefix.lower()} readings were rejected at {transmittance:g}%"
                 )
             measured = sum(used_readings) / len(used_readings)
             point = VerificationPoint(
@@ -331,7 +387,8 @@ class CalibrationWorkflow:
             )
             points.append(point)
             logger.info(
-                "Verification reference=%.2f average=%.2f abs_error=%.2f tolerance=%.2f used_count=%d rejected_count=%d result=%s",
+                "%s reference=%.2f average=%.2f abs_error=%.2f tolerance=%.2f used_count=%d rejected_count=%d result=%s",
+                log_prefix,
                 point.reference,
                 point.measured,
                 point.abs_error,
@@ -343,7 +400,8 @@ class CalibrationWorkflow:
             for evaluation in evaluations:
                 if not evaluation.used:
                     logger.warning(
-                        "Rejected verification reading reference=%.2f measured=%.4f reason=%s",
+                        "Rejected %s reading reference=%.2f measured=%.4f reason=%s",
+                        log_prefix.lower(),
                         transmittance,
                         evaluation.value,
                         evaluation.outlier_reason,
@@ -374,8 +432,8 @@ class CalibrationWorkflow:
                 ])
         logger.info("Wrote sample data to %s", path)
 
-    def _write_verification_csv(self, points: list[VerificationPoint]) -> None:
-        path = self.output_dir / "verification_results.csv"
+    def _write_verification_csv(self, points: list[VerificationPoint], filename: str) -> None:
+        path = self.output_dir / filename
         with path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow([
@@ -431,6 +489,28 @@ class CalibrationWorkflow:
             ],
         )
         logger.info("Wrote calibration fit plot to %s", path)
+
+    def _write_verification_plot(
+        self,
+        points: list[VerificationPoint],
+        filename: str,
+        title: str,
+    ) -> None:
+        path = self.output_dir / filename
+        write_verification_svg(
+            [
+                (
+                    point.reference,
+                    point.measured,
+                    point.passed(self.config.final_tolerance_percent),
+                )
+                for point in points
+            ],
+            path,
+            tolerance_percent=self.config.final_tolerance_percent,
+            title=title,
+        )
+        logger.info("Wrote verification plot to %s", path)
 
     def _create_run_output_dir(self) -> Path:
         base_dir = self.output_dir

@@ -36,6 +36,12 @@ transmittance_percent,samples_per_point,verification_samples_per_point
 .\.venv\Scripts\python.exe main.py --port COM6 --address 1 --verification-samples 5 --verification-outlier-z-threshold 3.5
 ```
 
+校准完成一段时间后，如果只需要按终检流程做复检，可以在启动后的提示中选择跳过校准流程；非交互运行时使用：
+
+```powershell
+.\.venv\Scripts\python.exe main.py --port COM6 --address 1 --recheck-only --non-interactive
+```
+
 ## 输出位置
 
 程序会在 `output` 下按时间创建本次运行文件夹，例如：
@@ -50,10 +56,17 @@ output/20260430_142501/
 - `calibration_fit.svg`：拟合图，蓝点为参与拟合样本，红色叉号为剔除样本，橙色菱形为终检平均结果。
 - `calibration_parameters.csv`：最终确认后的 `k/b/A1/A2`。
 - `verification_results.csv`：终检每次读数、是否参与平均、剔除原因、平均值和判定结果。
+- `verification_results.svg`：终检结果图，显示标准值、平均测量值、理想线和容差线。
+- `reinspection_results.csv`：仅复检运行时生成，字段和判定逻辑与终检一致，用于和校准后的终检结果区分。
+- `reinspection_results.svg`：复检结果图，格式和终检结果图一致。
 
 ## 终检说明
 
 终检读取次数优先来自 `calibration_plan.csv` 的 `verification_samples_per_point`。程序会先剔除偏差过大的读数，再用剩余读数平均值进行 `±5%` 判定。
+
+## 复检说明
+
+复检用于已完成校准后的后续检查。复检会跳过陀螺仪校准、采样周期配置、标定采样、拟合和参数写入，只执行与终检一致的透光膜逐点读取、异常剔除、平均和 `±5%` 判定，并输出到 `reinspection_results.csv` 和 `reinspection_results.svg`。
 
 ## 安装虚拟环境
 

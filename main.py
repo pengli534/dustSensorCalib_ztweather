@@ -49,6 +49,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip the final verification step after writing calibration parameters",
     )
+    parser.add_argument(
+        "--recheck-only",
+        action="store_true",
+        help="Skip calibration and run reinspection with the same process as final verification",
+    )
     return parser.parse_args()
 
 
@@ -75,6 +80,7 @@ def main() -> int:
         calibration_config = CalibrationConfig(
             device_address=args.address,
             calibration_points=calibration_points,
+            reinspection_only=args.recheck_only,
             skip_final_verification=args.skip_verification,
             sample_outlier_z_threshold=args.outlier_z_threshold,
             verification_samples_per_point=args.verification_samples,
@@ -89,7 +95,10 @@ def main() -> int:
                 output_dir=Path(args.output_dir),
             )
             result = workflow.run()
-            logger.info("Calibration complete: k=%.8f b=%.8f A1=0x%s A2=0x%s", result.k, result.b, result.a1_hex, result.a2_hex)
+            if result is None:
+                logger.info("Reinspection complete")
+            else:
+                logger.info("Calibration complete: k=%.8f b=%.8f A1=0x%s A2=0x%s", result.k, result.b, result.a1_hex, result.a2_hex)
         return 0
     except CalibrationError as exc:
         logger.error("Calibration failed: %s", exc)
